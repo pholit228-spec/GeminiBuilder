@@ -351,7 +351,8 @@ class BuilderPopup : public geode::Popup {
         m_mainLayer->addChild(m_key);
 
         m_version = TextInput::create(260.f, "Version (31 = 3.1, 20 = 2.0)");
-        m_version->setMaxCharCount(2);
+        // Do not cap TextInput's character count: on some Geode builds this
+        // prevents entering the second digit. Validate the two digits on Send.
         m_version->setString(Mod::get()->getSavedValue<std::string>("model-version", "25"));
         m_version->setPosition({size.width / 2, 210});
         m_mainLayer->addChild(m_version);
@@ -377,8 +378,12 @@ class BuilderPopup : public geode::Popup {
         modelMenu->setPosition({0, 0});
         m_mainLayer->addChild(modelMenu, 10);
         auto addModelButton = [this, modelMenu](char const* title, SEL_MenuHandler callback, float x) {
-            auto item = CCMenuItemSpriteExtra::create(ButtonSprite::create(title), this, callback);
-            item->setScale(.48f);
+            auto sprite = ButtonSprite::create(title);
+            // Scale the visual sprite, not the menu item. CCMenuItemSpriteExtra
+            // changes the item's scale while pressed, which otherwise makes the
+            // button jump to full size.
+            sprite->setScale(.48f);
+            auto item = CCMenuItemSpriteExtra::create(sprite, this, callback);
             item->setPosition({x, 151});
             modelMenu->addChild(item);
         };
