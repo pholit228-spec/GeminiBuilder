@@ -1,1 +1,4 @@
-__PLACEHOLDER__
+build/
+.cache/
+*.geode
+.DS_Store
