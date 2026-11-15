@@ -2,7 +2,6 @@
 #include "Properties.hpp"
 #include <Geode/modify/EditorUI.hpp>
 #include <Geode/modify/EditorPauseLayer.hpp>
-#include <Geode/modify/PauseLayer.hpp>
 #include <Geode/utils/web.hpp>
 #include <Geode/utils/async.hpp>
 #include <algorithm>
@@ -378,14 +377,6 @@ class $modify(GeminiEditorPause, EditorPauseLayer) {
     bool init(LevelEditorLayer* layer) {
         if (!EditorPauseLayer::init(layer)) return false;
         addAIButton(this, this, menu_selector(GeminiEditorPause::openGemini));
-        return true;
-    }
-    void openGemini(CCObject*) { BuilderPopup::create()->show(); }
-};
-class $modify(GeminiGamePause, PauseLayer) {
-    bool init(bool unfocused) {
-        if (!PauseLayer::init(unfocused)) return false;
-        addAIButton(this, this, menu_selector(GeminiGamePause::openGemini));
         return true;
     }
     void openGemini(CCObject*) { BuilderPopup::create()->show(); }
