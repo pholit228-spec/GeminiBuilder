@@ -313,7 +313,7 @@ class BuilderPopup : public geode::Popup {
         m_key->setString(sessionKey);
         m_key->setPosition({size.width / 2, 175});
         m_mainLayer->addChild(m_key);
-        m_model = TextInput::create(260.f, "Model ID");
+        m_model = TextInput::create(260.f, "Model ID", "chatFont.fnt");
         m_model->setMaxCharCount(100);
         m_model->setString(Mod::get()->getSavedValue<std::string>("model", "gemini-2.5-flash"));
         m_model->setPosition({size.width / 2, 139});
