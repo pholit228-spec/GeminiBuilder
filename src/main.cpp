@@ -77,9 +77,11 @@ class BuilderPopup : public geode::Popup {
 
     void updateModelLabel() {
         std::string version = m_version->getString().c_str();
+        bool validVersion = version.size() == 2 &&
+            std::all_of(version.begin(), version.end(), [](unsigned char c) { return std::isdigit(c); });
         std::string model = m_modelType == "preview"
             ? "gemini-3-flash-preview"
-            : "gemini-" + (version.size() == 2 ? version.substr(0, 1) + "." + version.substr(1) : std::string("?"))
+            : "gemini-" + (validVersion ? version.substr(0, 1) + "." + version.substr(1) : std::string("?"))
                 + "-" + m_modelType;
         m_modelLabel->setString(("Model: " + model).c_str());
     }
@@ -87,7 +89,10 @@ class BuilderPopup : public geode::Popup {
     std::string selectedModel() {
         std::string version = m_version->getString().c_str();
         if (m_modelType == "preview") return "gemini-3-flash-preview";
-        if (version != "25" && version != "35") return {};
+        if (version.size() != 2 ||
+            !std::all_of(version.begin(), version.end(), [](unsigned char c) { return std::isdigit(c); })) {
+            return {};
+        }
         return "gemini-" + version.substr(0, 1) + "." + version.substr(1) + "-" + m_modelType;
     }
 
@@ -136,9 +141,10 @@ class BuilderPopup : public geode::Popup {
         if (m_busy) return;
         std::string key = m_key->getString().c_str();
         std::string model = selectedModel();
+        updateModelLabel();
         std::string prompt = m_prompt->getString().c_str();
         if (key.empty() || prompt.empty() || model.empty() || !validModel(model)) {
-            FLAlertLayer::create("Gemini Builder", "Enter an API key, choose version 25 or 35, select a model and enter a request.", "OK")->show();
+            FLAlertLayer::create("Gemini Builder", "Enter a two-digit version (for example 31 = 3.1), select a model and enter a request.", "OK")->show();
             return;
         }
         sessionKey = key;
@@ -344,7 +350,7 @@ class BuilderPopup : public geode::Popup {
         m_key->setPosition({size.width / 2, 245});
         m_mainLayer->addChild(m_key);
 
-        m_version = TextInput::create(260.f, "Version (25 = 2.5, 35 = 3.5)");
+        m_version = TextInput::create(260.f, "Version (31 = 3.1, 20 = 2.0)");
         m_version->setMaxCharCount(2);
         m_version->setString(Mod::get()->getSavedValue<std::string>("model-version", "25"));
         m_version->setPosition({size.width / 2, 210});
@@ -356,9 +362,11 @@ class BuilderPopup : public geode::Popup {
             m_modelType = "flash";
         }
         std::string initialVersion = m_version->getString().c_str();
+        bool validInitialVersion = initialVersion.size() == 2 &&
+            std::all_of(initialVersion.begin(), initialVersion.end(), [](unsigned char c) { return std::isdigit(c); });
         std::string initialModel = m_modelType == "preview"
             ? "gemini-3-flash-preview"
-            : "gemini-" + (initialVersion.size() == 2 ? initialVersion.substr(0, 1) + "." + initialVersion.substr(1) : std::string("?"))
+            : "gemini-" + (validInitialVersion ? initialVersion.substr(0, 1) + "." + initialVersion.substr(1) : std::string("?"))
                 + "-" + m_modelType;
         m_modelLabel = CCLabelBMFont::create(("Model: " + initialModel).c_str(), "chatFont.fnt");
         m_modelLabel->setScale(.55f);
