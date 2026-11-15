@@ -1,1 +1,13 @@
-__PLACEHOLDER__
+{
+  "geode": "v5.11.2",
+  "gd": {
+    "win": "2.2081",
+    "android": "2.2081",
+    "mac": "2.2081"
+  },
+  "id": "cooliest.gemini_builder",
+  "name": "Gemini Builder",
+  "version": "v0.3.0",
+  "developer": "Cooliest",
+  "description": "An experimental Gemini-powered level editor assistant."
+}
