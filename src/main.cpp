@@ -139,7 +139,13 @@ class BuilderPopup : public geode::Popup {
 
     void onSend(CCObject*) {
         if (m_busy) return;
-        std::string key = m_key->getString().c_str();
+        std::string keyInput = m_key->getString().c_str();
+        std::string key = keyInput;
+        // The game's font cannot display the dot in keys formatted like AQ.xxx.
+        // Let users type the key without the dot and restore it for the API request.
+        if (key.size() > 2 && key.find('.') == std::string::npos) {
+            key.insert(2, ".");
+        }
         std::string model = selectedModel();
         updateModelLabel();
         std::string prompt = m_prompt->getString().c_str();
@@ -147,7 +153,7 @@ class BuilderPopup : public geode::Popup {
             FLAlertLayer::create("Gemini Builder", "Enter a two-digit version (for example 31 = 3.1), select a model and enter a request.", "OK")->show();
             return;
         }
-        sessionKey = key;
+        sessionKey = keyInput;
         Mod::get()->setSavedValue<std::string>("model", model);
         Mod::get()->setSavedValue<std::string>("model-version", m_version->getString().c_str());
         Mod::get()->setSavedValue<std::string>("model-type", m_modelType);
@@ -343,7 +349,7 @@ class BuilderPopup : public geode::Popup {
         if (!Popup::init(360.f, 280.f)) return false;
         setTitle("Gemini Builder");
         auto size = m_mainLayer->getContentSize();
-        m_key = TextInput::create(260.f, "Gemini API key");
+        m_key = TextInput::create(260.f, "API key (omit the dot)");
         m_key->setMaxCharCount(256);
         m_key->setPasswordMode(true);
         m_key->setString(sessionKey);
