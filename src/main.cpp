@@ -58,15 +58,43 @@ bool validModel(std::string const& model) {
 
 class BuilderPopup : public geode::Popup {
     TextInput* m_key = nullptr;
-    TextInput* m_model = nullptr;
+    TextInput* m_version = nullptr;
     TextInput* m_prompt = nullptr;
+    CCLabelBMFont* m_modelLabel = nullptr;
     CCLabelBMFont* m_status = nullptr;
+    std::string m_modelType = "flash";
     CCLabelBMFont* m_shotLabel = nullptr;
     bool m_sendShot = false;
     bool m_busy = false;
     async::TaskHolder<web::WebResponse> m_request;
 
     void status(char const* text) { m_status->setString(text); }
+
+    void chooseModel(char const* type) {
+        m_modelType = type;
+        updateModelLabel();
+    }
+
+    void updateModelLabel() {
+        std::string version = m_version->getString().c_str();
+        std::string model = m_modelType == "preview"
+            ? "gemini-3-flash-preview"
+            : "gemini-" + (version.size() == 2 ? version.substr(0, 1) + "." + version.substr(1) : std::string("?"))
+                + "-" + m_modelType;
+        m_modelLabel->setString(("Model: " + model).c_str());
+    }
+
+    std::string selectedModel() {
+        std::string version = m_version->getString().c_str();
+        if (m_modelType == "preview") return "gemini-3-flash-preview";
+        if (version != "25" && version != "35") return {};
+        return "gemini-" + version.substr(0, 1) + "." + version.substr(1) + "-" + m_modelType;
+    }
+
+    void onFlashLite(CCObject*) { chooseModel("flash-lite"); }
+    void onFlash(CCObject*) { chooseModel("flash"); }
+    void onPreview(CCObject*) { chooseModel("preview"); }
+    void onPro(CCObject*) { chooseModel("pro"); }
 
     std::string takeScreenshot() {
         auto director = CCDirector::sharedDirector();
@@ -107,10 +135,10 @@ class BuilderPopup : public geode::Popup {
     void onSend(CCObject*) {
         if (m_busy) return;
         std::string key = m_key->getString().c_str();
-        std::string model = m_model->getString().c_str();
+        std::string model = selectedModel();
         std::string prompt = m_prompt->getString().c_str();
-        if (key.empty() || prompt.empty() || !validModel(model)) {
-            FLAlertLayer::create("Gemini Builder", "Enter an API key, a valid model ID and a request.", "OK")->show();
+        if (key.empty() || prompt.empty() || model.empty() || !validModel(model)) {
+            FLAlertLayer::create("Gemini Builder", "Enter an API key, choose version 25 or 35, select a model and enter a request.", "OK")->show();
             return;
         }
         sessionKey = key;
@@ -304,23 +332,44 @@ class BuilderPopup : public geode::Popup {
     }
 
     bool init() {
-        if (!Popup::init(360.f, 230.f)) return false;
+        if (!Popup::init(360.f, 280.f)) return false;
         setTitle("Gemini Builder");
         auto size = m_mainLayer->getContentSize();
         m_key = TextInput::create(260.f, "Gemini API key");
         m_key->setMaxCharCount(256);
         m_key->setPasswordMode(true);
         m_key->setString(sessionKey);
-        m_key->setPosition({size.width / 2, 175});
+        m_key->setPosition({size.width / 2, 245});
         m_mainLayer->addChild(m_key);
-        m_model = TextInput::create(260.f, "Model ID", "chatFont.fnt");
-        m_model->setMaxCharCount(100);
-        m_model->setString(Mod::get()->getSavedValue<std::string>("model", "gemini-2.5-flash"));
-        m_model->setPosition({size.width / 2, 139});
-        m_mainLayer->addChild(m_model);
+
+        m_version = TextInput::create(260.f, "Version (25 = 2.5, 35 = 3.5)");
+        m_version->setMaxCharCount(2);
+        m_version->setString("25");
+        m_version->setPosition({size.width / 2, 210});
+        m_mainLayer->addChild(m_version);
+
+        m_modelLabel = CCLabelBMFont::create("Model: gemini-2.5-flash", "chatFont.fnt");
+        m_modelLabel->setScale(.55f);
+        m_modelLabel->setPosition({size.width / 2, 180});
+        m_mainLayer->addChild(m_modelLabel);
+
+        auto modelMenu = CCMenu::create();
+        modelMenu->setPosition({0, 0});
+        m_mainLayer->addChild(modelMenu, 10);
+        auto addModelButton = [this, modelMenu](char const* title, SEL_MenuHandler callback, float x) {
+            auto item = CCMenuItemSpriteExtra::create(ButtonSprite::create(title), this, callback);
+            item->setScale(.48f);
+            item->setPosition({x, 151});
+            modelMenu->addChild(item);
+        };
+        addModelButton("FLASH-LITE", menu_selector(BuilderPopup::onFlashLite), 53.f);
+        addModelButton("FLASH", menu_selector(BuilderPopup::onFlash), 137.f);
+        addModelButton("PREVIEW", menu_selector(BuilderPopup::onPreview), 220.f);
+        addModelButton("PRO", menu_selector(BuilderPopup::onPro), 303.f);
+
         m_prompt = TextInput::create(260.f, "Describe what to build");
         m_prompt->setMaxCharCount(600);
-        m_prompt->setPosition({size.width / 2, 103});
+        m_prompt->setPosition({size.width / 2, 105});
         m_mainLayer->addChild(m_prompt);
         auto actions = CCMenu::create();
         actions->setPosition({0, 0});
