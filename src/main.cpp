@@ -23,6 +23,25 @@ namespace {
 // Kept only until the game exits. Never put API keys in the repository.
 std::string sessionKey;
 
+std::filesystem::path apiKeyPath() {
+    return Mod::get()->getSaveDir() / "api-key.txt";
+}
+
+std::string loadApiKey() {
+    std::ifstream file(apiKeyPath(), std::ios::binary);
+    if (!file) return {};
+    std::string key((std::istreambuf_iterator<char>(file)), {});
+    while (!key.empty() && (key.back() == '\\n' || key.back() == '\\r')) key.pop_back();
+    return key;
+}
+
+bool saveApiKey(std::string const& key) {
+    std::ofstream file(apiKeyPath(), std::ios::binary | std::ios::trunc);
+    if (!file) return false;
+    file.write(key.data(), static_cast<std::streamsize>(key.size()));
+    return file.good();
+}
+
 std::string base64(std::vector<unsigned char> const& bytes) {
     static constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string out;
@@ -139,13 +158,9 @@ class BuilderPopup : public geode::Popup {
 
     void onSend(CCObject*) {
         if (m_busy) return;
-        std::string keyInput = m_key->getString().c_str();
-        std::string key = keyInput;
-        // The game's font cannot display the dot in keys formatted like AQ.xxx.
-        // Let users type the key without the dot and restore it for the API request.
-        if (key.size() > 2 && key.find('.') == std::string::npos) {
-            key.insert(2, ".");
-        }
+        // Send the API key exactly as entered. Never insert or remove characters:
+        // even one extra dot makes the key invalid and can cause HTTP 401.
+        std::string key = m_key->getString().c_str();
         std::string model = selectedModel();
         updateModelLabel();
         std::string prompt = m_prompt->getString().c_str();
@@ -153,7 +168,10 @@ class BuilderPopup : public geode::Popup {
             FLAlertLayer::create("Gemini Builder", "Enter a two-digit version (for example 31 = 3.1), select a model and enter a request.", "OK")->show();
             return;
         }
-        sessionKey = keyInput;
+        sessionKey = key;
+        if (!saveApiKey(key)) {
+            FLAlertLayer::create("Gemini Builder", "Could not save the API key to the mod save folder. The request will still be sent this time.", "OK")->show();
+        }
         Mod::get()->setSavedValue<std::string>("model", model);
         Mod::get()->setSavedValue<std::string>("model-version", m_version->getString().c_str());
         Mod::get()->setSavedValue<std::string>("model-type", m_modelType);
@@ -240,7 +258,14 @@ class BuilderPopup : public geode::Popup {
             m_busy = false;
             status("Ready");
             if (!response.ok()) {
-                auto msg = fmt::format("Request failed (HTTP {}). Check the key, model, quota and connection.", response.code());
+                std::string msg;
+                if (response.code() == 401) {
+                    msg = "HTTP 401: Gemini rejected the API key. Check that it is copied exactly from Google AI Studio. The mod now sends it unchanged; no dot is added automatically.";
+                } else if (response.code() == 403) {
+                    msg = "HTTP 403: The API key may not have permission to use the Gemini API, or the API is not enabled for its project.";
+                } else {
+                    msg = fmt::format("Request failed (HTTP {}). Check the model, quota and connection.", response.code());
+                }
                 FLAlertLayer::create("Gemini error", msg.c_str(), "OK")->show();
                 return;
             }
@@ -349,9 +374,10 @@ class BuilderPopup : public geode::Popup {
         if (!Popup::init(360.f, 280.f)) return false;
         setTitle("Gemini Builder");
         auto size = m_mainLayer->getContentSize();
-        m_key = TextInput::create(260.f, "API key (omit the dot)");
+        m_key = TextInput::create(260.f, "Paste Gemini API key");
         m_key->setMaxCharCount(256);
         m_key->setPasswordMode(true);
+        sessionKey = loadApiKey();
         m_key->setString(sessionKey);
         m_key->setPosition({size.width / 2, 245});
         m_mainLayer->addChild(m_key);
