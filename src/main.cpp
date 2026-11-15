@@ -143,6 +143,8 @@ class BuilderPopup : public geode::Popup {
         }
         sessionKey = key;
         Mod::get()->setSavedValue<std::string>("model", model);
+        Mod::get()->setSavedValue<std::string>("model-version", m_version->getString().c_str());
+        Mod::get()->setSavedValue<std::string>("model-type", m_modelType);
         auto editorAtSend = LevelEditorLayer::get();
         auto uiAtSend = EditorUI::get();
         // ObjectToolbox is the game's live registry. Do not maintain a hardcoded
@@ -344,11 +346,21 @@ class BuilderPopup : public geode::Popup {
 
         m_version = TextInput::create(260.f, "Version (25 = 2.5, 35 = 3.5)");
         m_version->setMaxCharCount(2);
-        m_version->setString("25");
+        m_version->setString(Mod::get()->getSavedValue<std::string>("model-version", "25"));
         m_version->setPosition({size.width / 2, 210});
         m_mainLayer->addChild(m_version);
 
-        m_modelLabel = CCLabelBMFont::create("Model: gemini-2.5-flash", "chatFont.fnt");
+        m_modelType = Mod::get()->getSavedValue<std::string>("model-type", "flash");
+        if (m_modelType != "flash-lite" && m_modelType != "flash" &&
+            m_modelType != "preview" && m_modelType != "pro") {
+            m_modelType = "flash";
+        }
+        std::string initialVersion = m_version->getString().c_str();
+        std::string initialModel = m_modelType == "preview"
+            ? "gemini-3-flash-preview"
+            : "gemini-" + (initialVersion.size() == 2 ? initialVersion.substr(0, 1) + "." + initialVersion.substr(1) : std::string("?"))
+                + "-" + m_modelType;
+        m_modelLabel = CCLabelBMFont::create(("Model: " + initialModel).c_str(), "chatFont.fnt");
         m_modelLabel->setScale(.55f);
         m_modelLabel->setPosition({size.width / 2, 180});
         m_mainLayer->addChild(m_modelLabel);
