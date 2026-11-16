@@ -72,32 +72,25 @@ std::string safeText(std::string text, size_t max = 360) {
 std::string existingObjectCatalog(LevelEditorLayer* editor) {
     if (!editor) return {};
 
-    std::string raw = editor->getLevelString();
+    // Use the exact same vector and indices that modify/delete operations use.
+    // getLevelString() is serialized independently and its object order/count
+    // is not guaranteed to match m_objectVector (which can contain null slots).
     std::string out;
-    out.reserve(std::min<size_t>(raw.size() + 64, 120000));
-
-    size_t start = 0;
-    int index = 0;
+    out.reserve(std::min<size_t>(editor->m_objectVector.size() * 96, 120000));
     constexpr size_t maxCatalog = 100000;
 
-    while (start < raw.size() && out.size() < maxCatalog) {
-        size_t end = raw.find(';', start);
-        if (end == std::string::npos) end = raw.size();
+    for (size_t index = 0; index < editor->m_objectVector.size() && out.size() < maxCatalog; ++index) {
+        auto object = editor->m_objectVector[index];
+        if (!object) continue;
 
-        if (end > start) {
-            std::string object = raw.substr(start, end - start);
-            out += "Object #";
-            out += std::to_string(index++);
-            out += ": ";
-            out += object;
-            out += "\n";
-        }
-
-        if (end == raw.size()) break;
-        start = end + 1;
+        out += "Object #";
+        out += std::to_string(index);
+        out += ": ";
+        out += object->getSaveString(editor).c_str();
+        out += "\n";
     }
 
-    if (start < raw.size()) {
+    if (out.size() >= maxCatalog) {
         out += "[Existing object data truncated at 100000 characters.]\n";
     }
 
