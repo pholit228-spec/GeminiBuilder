@@ -68,6 +68,42 @@ std::string safeText(std::string text, size_t max = 360) {
     return text;
 }
 
+
+std::string existingObjectCatalog(LevelEditorLayer* editor) {
+    if (!editor) return {};
+
+    std::string raw = editor->getLevelString();
+    std::string out;
+    out.reserve(std::min<size_t>(raw.size() + 64, 120000));
+
+    size_t start = 0;
+    int index = 0;
+    constexpr size_t maxCatalog = 100000;
+
+    while (start < raw.size() && out.size() < maxCatalog) {
+        size_t end = raw.find(';', start);
+        if (end == std::string::npos) end = raw.size();
+
+        if (end > start) {
+            std::string object = raw.substr(start, end - start);
+            out += "Object #";
+            out += std::to_string(index++);
+            out += ": ";
+            out += object;
+            out += "\n";
+        }
+
+        if (end == raw.size()) break;
+        start = end + 1;
+    }
+
+    if (start < raw.size()) {
+        out += "[Existing object data truncated at 100000 characters.]\n";
+    }
+
+    return out;
+}
+
 bool validModel(std::string const& model) {
     if (model.empty() || model.size() > 100) return false;
     return std::all_of(model.begin(), model.end(), [](unsigned char c) {
@@ -190,6 +226,7 @@ class BuilderPopup : public geode::Popup {
             // Frame names are hints, not guaranteed semantic descriptions.
             catalog += std::to_string(id) + ":" + std::string(frame.c_str());
         }
+        std::string existingObjects = existingObjectCatalog(editorAtSend);
         std::string instruction =
             "You are an assistant for a Geometry Dash 2.2081 editor mod. Reply ONLY with JSON: "
             "{\"message\":\"short ASCII English status\",\"objects\":[{\"id\":1,\"x\":150,\"y\":15,"
@@ -217,7 +254,9 @@ class BuilderPopup : public geode::Popup {
             "set initial level color channels, or execute code. Ask for clarification in message if needed. "
             "If the request is for advice or impossible, return empty objects. "
             "If coordinates are unspecified, start at x=150 y=15. Screenshot is only an imperfect snapshot. "
-            "Object registry (id:frame): " + catalog + "\nUser request: " + prompt;
+            "Object registry (id:frame): " + catalog +
+            "\nExisting objects in the open level (serialized by the game):\n" + existingObjects +
+            "User request: " + prompt;
 
         auto parts = matjson::Value::array();
         auto textPart = matjson::Value::object();
