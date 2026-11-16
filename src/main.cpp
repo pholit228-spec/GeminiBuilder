@@ -104,6 +104,79 @@ std::string existingObjectCatalog(LevelEditorLayer* editor) {
     return out;
 }
 
+
+std::string replaceObjectProperties(std::string serialized, matjson::Value const& props) {
+    if (!props.isArray() || props.size() > 32) return {};
+    std::vector<std::string> parts;
+    size_t start = 0;
+    while (start <= serialized.size()) {
+        size_t end = serialized.find(',', start);
+        if (end == std::string::npos) end = serialized.size();
+        parts.push_back(serialized.substr(start, end - start));
+        if (end == serialized.size()) break;
+        start = end + 1;
+    }
+    if (parts.size() < 3) return {};
+
+    std::set<int> seen;
+    for (auto const& prop : props) {
+        auto kr = prop["k"].asDouble();
+        if (!kr.isOk() || !std::isfinite(kr.unwrap()) || kr.unwrap() < 4 ||
+            kr.unwrap() > 580 || std::floor(kr.unwrap()) != kr.unwrap()) return {};
+        int k = static_cast<int>(kr.unwrap());
+        if (!seen.insert(k).second || !builder::allowedKey(k)) return {};
+
+        auto v = prop["v"];
+        std::string encoded;
+        if (v.isNumber()) {
+            auto number = v.asDouble();
+            if (!number.isOk() || !builder::numeric(k, number.unwrap())) return {};
+            encoded = fmt::format("{:.8f}", number.unwrap());
+            if (std::floor(number.unwrap()) == number.unwrap())
+                encoded = fmt::format("{:.0f}", number.unwrap());
+        } else if (v.isString()) {
+            encoded = v.asString().unwrapOr("");
+            if (!builder::text(k, encoded)) return {};
+        } else {
+            return {};
+        }
+
+        bool found = false;
+        for (size_t i = 3; i + 1 < parts.size(); i += 2) {
+            try {
+                if (std::stoi(parts[i]) == k) {
+                    parts[i + 1] = encoded;
+                    found = true;
+                    break;
+                }
+            } catch (...) {
+                return {};
+            }
+        }
+        if (!found) {
+            parts.push_back(std::to_string(k));
+            parts.push_back(encoded);
+        }
+    }
+
+    std::string result;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i) result += ",";
+        result += parts[i];
+    }
+    return result;
+}
+
+bool validObjectIndex(matjson::Value const& value, size_t count, size_t& out) {
+    auto result = value.asDouble();
+    if (!result.isOk() || !std::isfinite(result.unwrap()) ||
+        result.unwrap() < 0 || result.unwrap() >= static_cast<double>(count) ||
+        std::floor(result.unwrap()) != result.unwrap()) return false;
+    out = static_cast<size_t>(result.unwrap());
+    return true;
+}
+
+
 bool validModel(std::string const& model) {
     if (model.empty() || model.size() > 100) return false;
     return std::all_of(model.begin(), model.end(), [](unsigned char c) {
@@ -229,8 +302,11 @@ class BuilderPopup : public geode::Popup {
         std::string existingObjects = existingObjectCatalog(editorAtSend);
         std::string instruction =
             "You are an assistant for a Geometry Dash 2.2081 editor mod. Reply ONLY with JSON: "
-            "{\"message\":\"short ASCII English status\",\"objects\":[{\"id\":1,\"x\":150,\"y\":15,"
-            "\"props\":[{\"k\":21,\"v\":1}]}]}. props may be omitted. "
+            "{\"message\":\"short ASCII English status\",\"operations\":["
+            "{\"action\":\"create\",\"id\":1,\"x\":150,\"y\":15,\"props\":[{\"k\":21,\"v\":1}]},"
+            "{\"action\":\"modify\",\"index\":0,\"props\":[{\"k\":21,\"v\":2}]},"
+            "{\"action\":\"delete\",\"index\":1}]}. "
+            "operations may be omitted when nothing should change. "
             "Coordinates are absolute GD units (30 units per tile), x horizontal and y vertical. "
             "Add only IDs in the object registry below. Include numeric GD save-property IDs and values "
             "in props to configure NEW objects. No duplicate keys per object. Maximum 32 properties "
@@ -250,8 +326,12 @@ class BuilderPopup : public geode::Popup {
             "For color use a color trigger ID 899 with RGB and target color 23; block property 21 "
             "assigns a color channel and does not set RGB itself. Move trigger ID 901; pulse 1006. "
             "Use only supported property IDs: " + builder::keyCatalog() + ". "
-            "Unlisted or complex properties are unsupported. Never claim to edit existing objects, "
-            "set initial level color channels, or execute code. Ask for clarification in message if needed. "
+            "Unlisted or complex properties are unsupported. "
+            "You may modify existing objects with action=modify using their Object # index from the existing-object list. "
+            "Modify only properties with keys 4-580. Object ID and core position fields cannot be changed by modify. "
+            "You may delete existing objects with action=delete and their Object # index. "
+            "Never modify or delete the same Object # more than once in one request. "
+            "Create new objects with action=create using id/x/y/props. "
             "If the request is for advice or impossible, return empty objects. "
             "If coordinates are unspecified, start at x=150 y=15. Screenshot is only an imperfect snapshot. "
             "Object registry (id:frame): " + catalog +
@@ -321,90 +401,156 @@ class BuilderPopup : public geode::Popup {
                 return;
             }
             auto plan = planResult.unwrap();
-            auto arr = plan["objects"];
-            if (!arr.isArray() || arr.size() > 100) {
-                FLAlertLayer::create("Gemini error", "Invalid object list or more than 100 objects. Nothing was changed.", "OK")->show();
+            auto operations = plan["operations"];
+            if (!operations.isArray() || operations.size() > 100) {
+                FLAlertLayer::create("Gemini error", "Invalid operation list or more than 100 operations. Nothing was changed.", "OK")->show();
                 return;
             }
-            // Validate the entire plan before touching the level. Each value is
-            // serialized as one GD property; commas/semicolons can never enter.
-            std::vector<std::string> specs;
-            for (auto const& value : arr) {
-                auto idResult = value["id"].asDouble();
-                auto xResult = value["x"].asDouble();
-                auto yResult = value["y"].asDouble();
-                if (!idResult.isOk() || !xResult.isOk() || !yResult.isOk()) {
-                    FLAlertLayer::create("Gemini error", "Invalid object values. Nothing was changed.", "OK")->show();
-                    return;
-                }
-                auto id = idResult.unwrap(), x = xResult.unwrap(), y = yResult.unwrap();
-                auto toolbox = ObjectToolbox::sharedState();
-                if (!std::isfinite(id) || id < 0 || id > std::numeric_limits<int>::max() || std::floor(id) != id ||
-                    !toolbox || toolbox->m_allKeys.find(static_cast<int>(id)) == toolbox->m_allKeys.end() ||
-                    !std::isfinite(x) || !std::isfinite(y) || x < 0 || x > 100000 || y < 0 || y > 10000) {
-                    FLAlertLayer::create("Gemini error", "Unknown object ID or invalid position. Nothing was changed.", "OK")->show();
-                    return;
-                }
-                std::string serialized = fmt::format("1,{},2,{:.8f},3,{:.8f}", static_cast<int>(id), x, y);
-                auto props = value["props"];
-                if (!props.isNull()) {
-                    if (!props.isArray() || props.size() > 32) {
-                        FLAlertLayer::create("Gemini error", "Invalid property list. Nothing was changed.", "OK")->show();
+
+            std::vector<std::string> createSpecs;
+            struct ExistingChange {
+                size_t index;
+                std::string replacement;
+            };
+            std::vector<ExistingChange> existingChanges;
+            std::set<size_t> changedIndexes;
+            auto existingCount = editorAtSend ? editorAtSend->m_objectVector.size() : 0;
+
+            for (auto const& value : operations) {
+                auto action = value["action"].asString().unwrapOr("");
+
+                if (action == "create") {
+                    auto idResult = value["id"].asDouble();
+                    auto xResult = value["x"].asDouble();
+                    auto yResult = value["y"].asDouble();
+                    if (!idResult.isOk() || !xResult.isOk() || !yResult.isOk()) {
+                        FLAlertLayer::create("Gemini error", "Invalid create operation. Nothing was changed.", "OK")->show();
                         return;
                     }
-                    std::set<int> seen;
-                    for (auto const& prop : props) {
-                        auto kr = prop["k"].asDouble();
-                        if (!kr.isOk() || !std::isfinite(kr.unwrap()) || kr.unwrap() < 4 ||
-                            kr.unwrap() > 580 || std::floor(kr.unwrap()) != kr.unwrap()) {
-                            FLAlertLayer::create("Gemini error", "Invalid property key. Nothing was changed.", "OK")->show();
+                    auto id = idResult.unwrap(), x = xResult.unwrap(), y = yResult.unwrap();
+                    auto toolbox = ObjectToolbox::sharedState();
+                    if (!std::isfinite(id) || id < 0 || id > std::numeric_limits<int>::max() ||
+                        std::floor(id) != id || !toolbox ||
+                        toolbox->m_allKeys.find(static_cast<int>(id)) == toolbox->m_allKeys.end() ||
+                        !std::isfinite(x) || !std::isfinite(y) || x < 0 || x > 100000 ||
+                        y < 0 || y > 10000) {
+                        FLAlertLayer::create("Gemini error", "Unknown object ID or invalid create position. Nothing was changed.", "OK")->show();
+                        return;
+                    }
+
+                    std::string serialized =
+                        fmt::format("1,{},2,{:.8f},3,{:.8f}", static_cast<int>(id), x, y);
+                    auto props = value["props"];
+                    if (!props.isNull()) {
+                        if (!props.isArray() || props.size() > 32) {
+                            FLAlertLayer::create("Gemini error", "Invalid create property list. Nothing was changed.", "OK")->show();
                             return;
                         }
-                        int k = static_cast<int>(kr.unwrap());
-                        if (!seen.insert(k).second || !builder::allowedKey(k)) {
-                            FLAlertLayer::create("Gemini error", "Unknown or repeated property key. Nothing was changed.", "OK")->show();
-                            return;
-                        }
-                        auto v = prop["v"];
-                        std::string encoded;
-                        if (v.isNumber()) {
-                            auto number = v.asDouble();
-                            if (!number.isOk() || !builder::numeric(k, number.unwrap())) {
-                                FLAlertLayer::create("Gemini error", "Invalid numeric property. Nothing was changed.", "OK")->show();
+                        std::set<int> seen;
+                        for (auto const& prop : props) {
+                            auto kr = prop["k"].asDouble();
+                            if (!kr.isOk() || !std::isfinite(kr.unwrap()) || kr.unwrap() < 4 ||
+                                kr.unwrap() > 580 || std::floor(kr.unwrap()) != kr.unwrap()) {
+                                FLAlertLayer::create("Gemini error", "Invalid create property key. Nothing was changed.", "OK")->show();
                                 return;
                             }
-                            encoded = fmt::format("{:.8f}", number.unwrap());
-                            // Integer-only game properties must not contain a decimal point.
-                            if (std::floor(number.unwrap()) == number.unwrap()) encoded = fmt::format("{:.0f}", number.unwrap());
-                        } else if (v.isString()) {
-                            encoded = v.asString().unwrapOr("");
-                            if (!builder::text(k, encoded)) {
-                                FLAlertLayer::create("Gemini error", "Invalid text, group or HSV property. Nothing was changed.", "OK")->show();
+                            int k = static_cast<int>(kr.unwrap());
+                            if (!seen.insert(k).second || !builder::allowedKey(k)) {
+                                FLAlertLayer::create("Gemini error", "Unknown or repeated create property key. Nothing was changed.", "OK")->show();
                                 return;
                             }
-                        } else {
-                            FLAlertLayer::create("Gemini error", "Invalid property type. Nothing was changed.", "OK")->show();
+                            auto v = prop["v"];
+                            std::string encoded;
+                            if (v.isNumber()) {
+                                auto number = v.asDouble();
+                                if (!number.isOk() || !builder::numeric(k, number.unwrap())) {
+                                    FLAlertLayer::create("Gemini error", "Invalid numeric create property. Nothing was changed.", "OK")->show();
+                                    return;
+                                }
+                                encoded = fmt::format("{:.8f}", number.unwrap());
+                                if (std::floor(number.unwrap()) == number.unwrap())
+                                    encoded = fmt::format("{:.0f}", number.unwrap());
+                            } else if (v.isString()) {
+                                encoded = v.asString().unwrapOr("");
+                                if (!builder::text(k, encoded)) {
+                                    FLAlertLayer::create("Gemini error", "Invalid text create property. Nothing was changed.", "OK")->show();
+                                    return;
+                                }
+                            } else {
+                                FLAlertLayer::create("Gemini error", "Invalid create property type. Nothing was changed.", "OK")->show();
+                                return;
+                            }
+                            serialized += fmt::format(",{},{}", k, encoded);
+                        }
+                    }
+                    createSpecs.push_back(serialized + ";");
+                }
+                else if (action == "modify" || action == "delete") {
+                    size_t index = 0;
+                    if (!validObjectIndex(value["index"], existingCount, index) ||
+                        !changedIndexes.insert(index).second) {
+                        FLAlertLayer::create("Gemini error", "Invalid, out-of-range or repeated existing-object index. Nothing was changed.", "OK")->show();
+                        return;
+                    }
+
+                    auto object = editorAtSend->m_objectVector[index];
+                    if (!object) {
+                        FLAlertLayer::create("Gemini error", "Existing object is unavailable. Nothing was changed.", "OK")->show();
+                        return;
+                    }
+
+                    if (action == "delete") {
+                        existingChanges.push_back({index, {}});
+                    } else {
+                        auto replacement = replaceObjectProperties(object->getSaveString().c_str(), value["props"]);
+                        if (replacement.empty()) {
+                            FLAlertLayer::create("Gemini error", "Invalid properties for existing object. Nothing was changed.", "OK")->show();
                             return;
                         }
-                        serialized += fmt::format(",{},{}", k, encoded);
+                        existingChanges.push_back({index, replacement});
                     }
                 }
-                specs.push_back(serialized + ";");
+                else {
+                    FLAlertLayer::create("Gemini error", "Unknown operation. Nothing was changed.", "OK")->show();
+                    return;
+                }
             }
-            if (!specs.empty() && (!editorAtSend || !uiAtSend || LevelEditorLayer::get() != editorAtSend || EditorUI::get() != uiAtSend)) {
-                FLAlertLayer::create("Gemini Builder", "Building only works in the same open level editor. No changes were made.", "OK")->show();
+
+            if ((!createSpecs.empty() || !existingChanges.empty()) &&
+                (!editorAtSend || !uiAtSend || LevelEditorLayer::get() != editorAtSend ||
+                 EditorUI::get() != uiAtSend)) {
+                FLAlertLayer::create("Gemini Builder", "Editing only works in the same open level editor. No changes were made.", "OK")->show();
                 return;
             }
+
+            std::sort(existingChanges.begin(), existingChanges.end(),
+                [](auto const& a, auto const& b) { return a.index > b.index; });
+
+            int modified = 0;
+            int deleted = 0;
+            for (auto const& change : existingChanges) {
+                auto object = editorAtSend->m_objectVector[change.index];
+                if (!object) continue;
+
+                editorAtSend->removeObject(object, true);
+                if (change.replacement.empty()) {
+                    ++deleted;
+                } else if (editorAtSend->addObjectFromString(change.replacement)) {
+                    ++modified;
+                }
+            }
+
             int created = 0;
-            if (!specs.empty()) {
+            if (!createSpecs.empty()) {
                 std::string objectString;
-                for (auto const& item : specs) objectString += item;
-                // Use the game's importer so each property is applied during creation.
-                auto objects = editorAtSend->createObjectsFromString(objectString, false, false);
+                for (auto const& item : createSpecs) objectString += item;
+                auto objects = editorAtSend->createObjectsFromString(objectString, false);
                 if (objects) created = static_cast<int>(objects->count());
             }
+
             auto message = safeText(plan["message"].asString().unwrapOr("Done."));
-            auto summary = fmt::format("{}\n\nCreated: {} / {} objects.", message, created, specs.size());
+            auto summary = fmt::format("{}\n\nCreated: {} | Modified: {} | Deleted: {}.",
+                message, created, modified, deleted);
             FLAlertLayer::create("Gemini Builder", summary.c_str(), "OK")->show();
         });
     }
