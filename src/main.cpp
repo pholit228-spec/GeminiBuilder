@@ -31,7 +31,7 @@ std::string loadApiKey() {
     std::ifstream file(apiKeyPath(), std::ios::binary);
     if (!file) return {};
     std::string key((std::istreambuf_iterator<char>(file)), {});
-    while (!key.empty() && (key.back() == '\\n' || key.back() == '\\r')) key.pop_back();
+    while (!key.empty() && (key.back() == '\n' || key.back() == '\r')) key.pop_back();
     return key;
 }
 
@@ -502,7 +502,7 @@ class BuilderPopup : public geode::Popup {
                     if (action == "delete") {
                         existingChanges.push_back({index, {}});
                     } else {
-                        auto replacement = replaceObjectProperties(object->getSaveString().c_str(), value["props"]);
+                        auto replacement = replaceObjectProperties(object->getSaveString(editorAtSend).c_str(), value["props"]);
                         if (replacement.empty()) {
                             FLAlertLayer::create("Gemini error", "Invalid properties for existing object. Nothing was changed.", "OK")->show();
                             return;
@@ -535,7 +535,7 @@ class BuilderPopup : public geode::Popup {
                 editorAtSend->removeObject(object, true);
                 if (change.replacement.empty()) {
                     ++deleted;
-                } else if (editorAtSend->addObjectFromString(change.replacement)) {
+                } else if (editorAtSend->createObjectsFromString(change.replacement + ";", false, true)) {
                     ++modified;
                 }
             }
@@ -544,7 +544,7 @@ class BuilderPopup : public geode::Popup {
             if (!createSpecs.empty()) {
                 std::string objectString;
                 for (auto const& item : createSpecs) objectString += item;
-                auto objects = editorAtSend->createObjectsFromString(objectString, false);
+                auto objects = editorAtSend->createObjectsFromString(objectString, false, false);
                 if (objects) created = static_cast<int>(objects->count());
             }
 
